@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Plants vs. Zombies — Full Canvas</title>
+<style>
+  :root {
+    --bg: #153b2d;
+    --lawn1: #1a694f;
+    --lawn2: #1f7559;
+    --gridline: #0e362a;
+    --panel: #0f2620;
+    --panel-border: #123c2f;
+    --white: #edf7f3;
+    --accent: #ffd54f;
+    --danger: #ff5c5c;
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: linear-gradient(180deg, #0e2019, #164233);
+    color: var(--white);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  }
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(240px, 300px) 1fr;
+    gap: 12px;
+    padding: 12px;
+    height: 100%;
+    box-sizing: border-box;
+  }
+  .sidebar {
+    background: rgba(15, 38, 32, 0.9);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 12px;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto auto;
+    gap: 10px;
+    overflow: auto;
+  }
+  .title { font-weight: 700; letter-spacing: .5px; }
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stat {
+    background: #0c1e19;
+    border: 1px solid #113429;
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 14px;
+  }
+  .buttons { display: grid; gap: 8px; }
+  .btn {
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    background: #13382c;
+    border: 1px solid #195141;
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.active { outline: 2px solid var(--accent); }
+  .cost { font-size: 12px; color: var(--accent); }
+  .hint {
+    font-size: 12px;
+    opacity: .9;
+    line-height: 1.4;
+    border-top: 1px dashed #265c4a;
+    padding-top: 8px;
+  }
+  .controls {
+    display: grid;
+    grid-auto-flow: column;
+    gap: 8px;
+  }
+  .controls button {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #0f0f0f;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .game {
+    position: relative;
+    background: #174634;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    overflow: hidden;
+    min-height: 60vh;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: crisp-edges;
+    touch-action: manipulation;
+  }
+  .overlay {
+    position: absolute;
+    inset: 12px 12px auto auto;
+    background: rgba(0,0,0,0.25);
+    border: 1px solid #265c4a;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    pointer-events: none;
+  }
+  .bar { height: 8px; background: #0c1e19; border: 1px solid #113429; border-radius: 999px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #33d17a, #ffd54f); width: 0%; transition: width .2s ease; }
+
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: 1fr; }
+    .controls { grid-auto-flow: row; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside class="sidebar">
+    <div class="title">🌱 Plants vs Zombies</div>
+    <div class="stats">
+      <div class="stat"><b>Mặt trời:</b> <span id="sun">100</span></div>
+      <div class="stat"><b>Điểm:</b> <span id="score">0</span></div>
+      <div class="stat"><b>Cấp:</b> <span id="level">1</span></div>
+      <div class="stat"><b>Tiến độ:</b><div class="bar"><span id="progress"></span></div></div>
+    </div>
+
+    <div class="buttons" id="plantButtons"></div>
+
+    <div class="controls">
+      <button id="startWave">Start wave</button>
+      <button id="restart">Restart</button>
+    </div>
+
+    <div class="hint">
+      <b>Cách chơi:</b><br>
+      - Nhấn Start hoặc Space để bắt đầu wave, Restart hoặc R để chơi lại.<br>
+      - Chọn cây, chạm/click ô lưới để trồng. Shift+click/chuột phải để tháo (hoàn 50%).<br>
+      - Di chuột/đưa ngón tay qua icon mặt trời để tự nhặt.<br>
+      - Ice Shooter làm chậm; Potato Mine cần thời gian kích hoạt rồi nổ khi bị dẫm.
+    </div>
+  </aside>
+
+  <main class="game">
+    <canvas id="gameCanvas"></canvas>
+    <div class="overlay" id="msg">Nhấn Start/Space để bắt đầu wave</div>
+  </main>
+</div>
+
+<script>
+(() => {
+  // Responsive canvas + logical grid
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Logical grid (fixed gameplay coordinates)
+  const ROWS = 8;
+  const COLS = 10;
+  const CELL_W = 90;
+  const CELL_H = 80;
+  const GRID_LEFT = 40;
+  const GRID_TOP = 40;
+  const LOGICAL_W = GRID_LEFT + COLS * CELL_W + 60;
+  const LOGICAL_H = GRID_TOP + ROWS * CELL_H + 60;
+
+  // Fit canvas to container while preserving mapping
+  function resizeCanvas() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const scale = Math.min(rect.width / LOGICAL_W, rect.height / LOGICAL_H);
+    canvas.width = LOGICAL_W;
+    canvas.height = LOGICAL_H;
+    canvas.style.width = (LOGICAL_W * scale) + 'px';
+    canvas.style.height = (LOGICAL_H * scale) + 'px';
+    canvas.style.maxWidth = '100%';
+    canvas.style.maxHeight = '100%';
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  // UI refs
+  const ui = {
+    sun: document.getElementById('sun'),
+    score: document.getElementById('score'),
+    level: document.getElementById('level'),
+    progress: document.getElementById('progress'),
+    msg: document.getElementById('msg'),
+    plantButtons: document.getElementById('plantButtons'),
+    startWave: document.getElementById('startWave'),
+    restart: document.getElementById('restart'),
+  };
+
+  // Plant config
+  const PLANTS = {
+    peashooter: { name:'Peashooter', cost:100, hp:100, cooldown:1200, type:'attack' },
+    wallnut:    { name:'Wallnut',    cost:50,  hp:420, cooldown:0,    type:'block'  },
+    sunflower:  { name:'Sunflower',  cost:50,  hp:100, cooldown:8000, type:'sun'    },
+    iceshooter: { name:'Ice Shooter',cost:125, hp:100, cooldown:1500, type:'ice'    },
+    potatomine: { name:'Potato Mine',cost:25,  hp:40,  cooldown:0,    type:'mine', armTime:10000, blastRadius:45, damage:9999 }
+  };
+
+  // Zombie config
+  const ZOMBIES = {
+    basic:  { name:'Zombie',          hp:100, speed:0.05 },
+    cone:   { name:'Conehead Zombie', hp:210, speed:0.05, armor:'cone' },
+    bucket: { name:'Buckethead Zombie', hp:300, speed:0.05, armor:'bucket' },
+    rugby:  { name:'All-Star/Rugby',  hp:360, speed:0.1, armor:'helmet' },
+  };
+
+  // Levels
+  const LEVELS = [
+    { duration: 36000, spawnEvery: 3500, mix: ['basic','basic','cone'] },
+    { duration: 42000, spawnEvery: 3000, mix: ['basic','cone','bucket'] },
+    { duration: 46000, spawnEvery: 2500, mix: ['basic','cone','bucket','rugby'] },
+    { duration: 52000, spawnEvery: 2000, mix: ['cone','bucket','rugby'] },
+  ];
+
+  // State
+  let selectedPlant = null;
+  let sun = 100;
+  let score = 0;
+  let levelIndex = 0;
+  let waveActive = false;
+  let running = true;
+
+  const grid = Array.from({ length: ROWS }, () => Array.from({ length: COLS }, () => null));
+  const bullets = [];
+  const zombies = [];
+  const suns = [];
+
+  let lastTime = 0;
+  let spawnTimer = 0;
+  let levelTime = 0;
+  let msgTimer = 0;
+
+  // UI buttons for plants
+  Object.entries(PLANTS).forEach(([key, conf]) => {
+    const btn = document.createElement('div');
+    btn.className = 'btn';
+    const iconDiv = document.createElement('div');
+    iconDiv.style.width = '32px'; iconDiv.style.height = '32px'; iconDiv.style.borderRadius = '8px';
+    iconDiv.style.border = '2px solid #195141';
+    iconDiv.style.background = ({
+      peashooter: '#1b8f5b',
+      wallnut: '#8b5a2b',
+      sunflower: '#ffd54f',
+      iceshooter: '#6ec6ff',
+      potatomine: '#a36f2c'
+    })[key] || '#1b8f5b';
+    const infoDiv = document.createElement('div');
+    infoDiv.innerHTML = `<b>${conf.name}</b><br><span class="cost">Chi phí: ${conf.cost}</span>`;
+    const tail = document.createElement('div');
+    tail.textContent = conf.type === 'sun' ? '☀️' : conf.type === 'block' ? '🧱' : conf.type === 'ice' ? '❄️' : conf.type === 'mine' ? '💣' : '🟢';
+    btn.appendChild(iconDiv); btn.appendChild(infoDiv); btn.appendChild(tail);
+    btn.addEventListener('click', () => {
+      selectedPlant = key;
+      document.querySelectorAll('.btn').forEach(x => x.classList.remove('active'));
+      btn.classList.add('active');
+      message(`Đã chọn: ${conf.name}`);
+    });
+    ui.plantButtons.appendChild(btn);
+  });
+
+  // Helpers
+  function updateUI() { ui.sun.textContent = sun; ui.score.textContent = score; ui.level.textContent = levelIndex + 1; }
+  function message(text, time = 1600) { ui.msg.textContent = text; ui.msg.style.opacity = 1; msgTimer = time; }
+  function cellRect(r, c) {
+    const x = GRID_LEFT + c * CELL_W;
+    const y = GRID_TOP + r * CELL_H;
+    return { x, y, w: CELL_W, h: CELL_H };
+  }
+  function pointToCell(x, y) {
+    x -= GRID_LEFT; y -= GRID_TOP;
+    if (x < 0 || y < 0) return null;
+    const c = Math.floor(x / CELL_W);
+    const r = Math.floor(y / CELL_H);
+    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return null;
+    return { r, c };
+  }
+  function randChoice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  // Sun
+  const SUN_RADIUS = 24; // icon sun size
+  function addSun(x, y, value = 50) { suns.push({ x, y, r: SUN_RADIUS, value, vy: 0.06 + Math.random() * 0.04 }); }
+  function drawSunIcon(s) {
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.fillStyle = '#ffd54f';
+    ctx.strokeStyle = '#c49a22';
+    ctx.lineWidth = 2;
+    // core
+    ctx.beginPath(); ctx.arc(0, 0, s.r * 0.68, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // rays
+    const rays = 9;
+    for (let i = 0; i < rays; i++) {
+      const ang = (i / rays) * Math.PI * 2;
+      const rx = Math.cos(ang) * s.r;
+      const ry = Math.sin(ang) * s.r;
+      ctx.beginPath(); ctx.moveTo(rx * 0.65, ry * 0.65); ctx.lineTo(rx, ry); ctx.stroke();
+    }
+    // glint
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath(); ctx.arc(-s.r*0.3, -s.r*0.3, s.r*0.25, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  // Spawn zombies
+  function spawnZombie() {
+    const lane = Math.floor(Math.random() * ROWS);
+    const zType = randChoice(LEVELS[levelIndex].mix);
+    const conf = ZOMBIES[zType];
+    zombies.push({
+      kind: zType, lane,
+      x: GRID_LEFT + COLS * CELL_W + 40,
+      y: GRID_TOP + lane * CELL_H + CELL_H / 2,
+      w: 36, h: 54,
+      hp: conf.hp,
+      baseHP: conf.hp,
+      speed: conf.speed,
+      eating: false,
+      slowFactor: 1.0
+    });
+  }
+
+  // Input: mouse and touch
+  function mapClientToCanvas(clientX, clientY) {
+    const styleW = parseFloat(canvas.style.width) || LOGICAL_W;
+    const styleH = parseFloat(canvas.style.height) || LOGICAL_H;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = LOGICAL_W / rect.width;
+    const scaleY = LOGICAL_H / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+    return { x, y };
+  }
+
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  canvas.addEventListener('mousedown', (e) => {
+    const { x, y } = mapClientToCanvas(e.clientX, e.clientY);
+
+    // Auto-collect sun if hit
+    for (let i = suns.length - 1; i >= 0; i--) {
+      const s = suns[i]; const dx = x - s.x, dy = y - s.y;
+      if (dx*dx + dy*dy <= s.r*s.r * 1.4) { sun += s.value; suns.splice(i, 1); updateUI(); return; }
+    }
+
+    const cell = pointToCell(x, y);
+    if (!cell) return;
+
+    // Remove plant: right click or Shift+click
+    if (e.button === 2 || e.shiftKey) {
+      const p = grid[cell.r][cell.c];
+      if (p) {
+        const refund = Math.floor(PLANTS[p.kind].cost * 0.5);
+        sun += refund; grid[cell.r][cell.c] = null; updateUI();
+        message(`Tháo cây, hoàn ${refund} mặt trời`);
+      }
+      return;
+    }
+
+    // Place plant
+    if (!selectedPlant) { message('Chọn loại cây trước nhé.'); return; }
+    if (grid[cell.r][cell.c]) { message('Ô này đã có cây.'); return; }
+    const conf = PLANTS[selectedPlant];
+    if (sun < conf.cost) { message(`Không đủ mặt trời (${conf.cost} cần).`); return; }
+
+    sun -= conf.cost; updateUI();
+    grid[cell.r][cell.c] = {
+      kind: selectedPlant,
+      hp: conf.hp,
+      r: cell.r, c: cell.c,
+      shootTimer: 0,
+      sunTimer: 0,
+      armed: conf.type === 'mine' ? false : undefined,
+      armProgress: 0
+    };
+    message(`Trồng ${conf.name} thành công.`);
+  });
+
+  // Auto collect on hover
+  canvas.addEventListener('mousemove', (e) => {
+    const { x, y } = mapClientToCanvas(e.clientX, e.clientY);
+    for (let i = suns.length - 1; i >= 0; i--) {
+      const s = suns[i]; const dx = x - s.x, dy = y - s.y;
+      if (dx*dx + dy*dy <= s.r*s.r * 1.4) { sun += s.value; suns.splice(i, 1); updateUI(); }
+    }
+  });
+
+  // Touch support
+  canvas.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    const { x, y } = mapClientToCanvas(t.clientX, t.clientY);
+    // collect sun
+    for (let i = suns.length - 1; i >= 0; i--) {
+      const s = suns[i]; const dx = x - s.x, dy = y - s.y;
+      if (dx*dx + dy*dy <= s.r*s.r * 1.4) { sun += s.value; suns.splice(i, 1); updateUI(); return; }
+    }
+    // place plant
+    const cell = pointToCell(x, y);
+    if (!cell) return;
+    if (!selectedPlant || grid[cell.r][cell.c]) return;
+    const conf = PLANTS[selectedPlant];
+    if (sun < conf.cost) return;
+    sun -= conf.cost; updateUI();
+    grid[cell.r][cell.c] = {
+      kind: selectedPlant, hp: conf.hp, r: cell.r, c: cell.c,
+      shootTimer: 0, sunTimer: 0, armed: conf.type === 'mine' ? false : undefined, armProgress: 0
+    };
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    const { x, y } = mapClientToCanvas(t.clientX, t.clientY);
+    for (let i = suns.length - 1; i >= 0; i--) {
+      const s = suns[i]; const dx = x - s.x, dy = y - s.y;
+      if (dx*dx + dy*dy <= s.r*s.r * 1.4) { sun += s.value; suns.splice(i, 1); updateUI(); }
+    }
+  }, { passive: true });
+
+  // Drawing
+  function drawGrid() {
+    ctx.fillStyle = '#16543f';
+    ctx.fillRect(GRID_LEFT - 10, GRID_TOP - 10, COLS * CELL_W + 20, ROWS * CELL_H + 20);
+    for (let r = 0; r < ROWS; r++) {
+      ctx.fillStyle = r % 2 === 0 ? '#1a694f' : '#1f7559';
+      ctx.fillRect(GRID_LEFT, GRID_TOP + r * CELL_H, COLS * CELL_W, CELL_H);
+    }
+    ctx.strokeStyle = '#0e362a'; ctx.lineWidth = 2;
+    for (let c = 0; c <= COLS; c++) {
+      const x = GRID_LEFT + c * CELL_W;
+      ctx.beginPath(); ctx.moveTo(x, GRID_TOP); ctx.lineTo(x, GRID_TOP + ROWS * CELL_H); ctx.stroke();
+    }
+    for (let r = 0; r <= ROWS; r++) {
+      const y = GRID_TOP + r * CELL_H;
+      ctx.beginPath(); ctx.moveTo(GRID_LEFT, y); ctx.lineTo(GRID_LEFT + COLS * CELL_W, y); ctx.stroke();
+    }
+  }
+
+  function drawPlant(p) {
+    const { x, y } = cellRect(p.r, p.c);
+    const cx = x + CELL_W / 2;
+    const cy = y + CELL_H / 2;
+
+    // HP bar
+    ctx.fillStyle = '#0b1c16';
+    ctx.fillRect(x + 6, y + 6, CELL_W - 12, 5);
+    const maxHp = PLANTS[p.kind].hp;
+    ctx.fillStyle = '#33d17a';
+    ctx.fillRect(x + 6, y + 6, (CELL_W - 12) * Math.max(0, p.hp / maxHp), 5);
+
+    if (p.kind === 'peashooter') {
+      ctx.fillStyle = '#1b8f5b'; ctx.strokeStyle = '#0a5a3a'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    } else if (p.kind === 'wallnut') {
+      ctx.fillStyle = '#8b5a2b'; ctx.strokeStyle = '#5a3a1d'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(cx - 16, cy - 20, 32, 40, 8); ctx.fill(); ctx.stroke();
+    } else if (p.kind === 'sunflower') {
+      ctx.fillStyle = '#ffd54f';
+      for (let i = 0; i < 10; i++) {
+        const a = i * (Math.PI * 2 / 10);
+        ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 12, cy + Math.sin(a) * 12, 5, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = '#c49a22'; ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.fill();
+    } else if (p.kind === 'iceshooter') {
+      ctx.fillStyle = '#6ec6ff'; ctx.strokeStyle = '#3ea0de'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#bfe6ff';
+      ctx.beginPath(); ctx.arc(cx + 9, cy - 7, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx - 9, cy + 5, 4, 0, Math.PI * 2); ctx.fill();
+    } else if (p.kind === 'potatomine') {
+      ctx.fillStyle = '#a36f2c'; ctx.strokeStyle = '#754d1b'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(cx - 14, cy - 10, 28, 20, 7); ctx.fill(); ctx.stroke();
+      if (p.armed) {
+        ctx.fillStyle = '#ff5c5c'; ctx.beginPath(); ctx.arc(cx, cy - 14, 4.5, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = '#ffd54f';
+        const prog = Math.min(1, p.armProgress);
+        ctx.fillRect(cx - 14, cy + 12, 28 * prog, 4);
+      }
+    }
+  }
+
+  function drawBullet(b) {
+    ctx.fillStyle = b.ice ? '#6ec6ff' : '#9be36b';
+    ctx.strokeStyle = b.ice ? '#3ea0de' : '#6fb54b';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+
+  function drawZombie(z) {
+    // base body
+    ctx.fillStyle = '#7a4d61'; ctx.strokeStyle = '#483243'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(z.x - z.w/2, z.y - z.h/2, z.w, z.h, 8); ctx.fill(); ctx.stroke();
+    // head
+    ctx.fillStyle = '#b78ea5'; ctx.beginPath(); ctx.arc(z.x, z.y - z.h/2 - 9, 11, 0, Math.PI * 2); ctx.fill();
+
+    // variant armor/helmet
+    if (z.kind === 'cone') {
+      ctx.fillStyle = '#ff7f27';
+      ctx.beginPath();
+      ctx.moveTo(z.x, z.y - z.h/2 - 20);
+      ctx.lineTo(z.x - 11, z.y - z.h/2 - 5);
+      ctx.lineTo(z.x + 11, z.y - z.h/2 - 5);
+      ctx.closePath(); ctx.fill();
+    } else if (z.kind === 'bucket') {
+      ctx.fillStyle = '#9aa1a6'; ctx.beginPath(); ctx.roundRect(z.x - 13, z.y - z.h/2 - 20, 26, 14, 3); ctx.fill();
+      ctx.fillStyle = '#848b90'; ctx.fillRect(z.x - 15, z.y - z.h/2 - 6, 30, 3);
+    } else if (z.kind === 'rugby') {
+      ctx.fillStyle = '#c62828'; ctx.beginPath(); ctx.arc(z.x, z.y - z.h/2 - 9, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(z.x - 7, z.y - z.h/2 - 9); ctx.lineTo(z.x + 7, z.y - z.h/2 - 9); ctx.stroke();
+      ctx.fillStyle = '#d84315'; ctx.beginPath(); ctx.roundRect(z.x - z.w/2, z.y - z.h/2, z.w, 9, 4); ctx.fill();
+    }
+
+    // hp bar
+    ctx.fillStyle = '#0b1c16'; ctx.fillRect(z.x - 16, z.y + z.h/2 + 3, 32, 5);
+    ctx.fillStyle = '#ff5c5c';
+    ctx.fillRect(z.x - 16, z.y + z.h/2 + 3, 32 * Math.max(0, z.hp / z.baseHP), 5);
+
+    // slow tint if affected
+    if (z.slowFactor < 1) {
+      ctx.fillStyle = 'rgba(110,198,255,0.25)';
+      ctx.beginPath(); ctx.roundRect(z.x - z.w/2, z.y - z.h/2, z.w, z.h, 8); ctx.fill();
+    }
+  }
+
+  // Game logic
+  function update(dt) {
+    if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) ui.msg.style.opacity = 0; }
+
+    // ambient suns
+    for (let i = suns.length - 1; i >= 0; i--) {
+      const s = suns[i]; s.y += s.vy * dt;
+      if (s.y > GRID_TOP + ROWS * CELL_H - 10) s.vy = 0;
+    }
+
+    const lvl = LEVELS[levelIndex];
+    if (waveActive) {
+      levelTime += dt; spawnTimer += dt;
+      const progress = Math.min(1, levelTime / lvl.duration);
+      ui.progress.style.width = (progress * 100).toFixed(1) + '%';
+
+      if (spawnTimer >= lvl.spawnEvery) { spawnTimer = 0; spawnZombie(); }
+
+      // Level complete
+      if (progress >= 1 && zombies.length === 0) {
+        if (levelIndex < LEVELS.length - 1) {
+          levelIndex++; levelTime = 0; spawnTimer = 0; sun += 50; updateUI();
+          message(`Qua cấp ${levelIndex + 1}! Thưởng +50 mặt trời.`);
+        } else { running = false; message('Bạn đã chiến thắng! Hoàn thành tất cả cấp.'); }
+      }
+    }
+
+    // Plants behaviors
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const p = grid[r][c];
+        if (!p) continue;
+        const conf = PLANTS[p.kind];
+        p.shootTimer += dt; p.sunTimer += dt;
+
+        if (p.kind === 'sunflower') {
+          if (p.sunTimer >= conf.cooldown) {
+            p.sunTimer = 0;
+            const { x, y } = cellRect(p.r, p.c);
+            addSun(x + CELL_W/2, y + 16, 50);
+          }
+        } else if (p.kind === 'potatomine') {
+          if (!p.armed) {
+            p.armProgress = Math.min(1, (p.sunTimer) / conf.armTime);
+            if (p.sunTimer >= conf.armTime) p.armed = true;
+          } else {
+            const cellX = GRID_LEFT + c * CELL_W + CELL_W/2;
+            const cellY = GRID_TOP + r * CELL_H + CELL_H/2;
+            let exploded = false;
+            for (let i = zombies.length - 1; i >= 0; i--) {
+              const z = zombies[i];
+              const dx = z.x - cellX, dy = z.y - cellY;
+              if (Math.hypot(dx, dy) <= conf.blastRadius) { exploded = true; break; }
+            }
+            if (exploded) {
+              // damage nearby zombies
+              for (let j = zombies.length - 1; j >= 0; j--) {
+                const z2 = zombies[j];
+                const d2x = z2.x - cellX, d2y = z2.y - cellY;
+                if (Math.hypot(d2x, d2y) <= conf.blastRadius + 8) {
+                  z2.hp -= conf.damage;
+                  if (z2.hp <= 0) { score += 10; addSun(z2.x, z2.y - 12); zombies.splice(j, 1); updateUI(); }
+                }
+              }
+              grid[r][c] = null; // consume mine
+            }
+          }
+        } else if (p.kind === 'peashooter' || p.kind === 'iceshooter') {
+          const ahead = zombies.some(z => z.lane === r && z.x > GRID_LEFT + c * CELL_W + CELL_W/2);
+          if (ahead && p.shootTimer >= conf.cooldown) {
+            p.shootTimer = 0;
+            const { x, y } = cellRect(p.r, p.c);
+            bullets.push({
+              x: x + CELL_W - 8,
+              y: y + CELL_H/2,
+              vx: 0.35,
+              dmg: p.kind === 'iceshooter' ? 28 : 34,
+              ice: p.kind === 'iceshooter'
+            });
+          }
+        }
+      }
+    }
+
+    // Bullets
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.x += b.vx * dt;
+      if (b.x > GRID_LEFT + COLS * CELL_W + 60) { bullets.splice(i, 1); continue; }
+      for (let j = 0; j < zombies.length; j++) {
+        const z = zombies[j];
+        if (Math.abs(b.y - z.y) < z.h/2 && Math.abs(b.x - z.x) < z.w/2) {
+          let dmg = b.dmg;
+          if (z.kind === 'bucket') dmg *= 0.72;
+          else if (z.kind === 'cone') dmg *= 0.85;
+          else if (z.kind === 'rugby') dmg *= 0.75;
+          z.hp -= dmg;
+          if (b.ice) z.slowFactor = Math.max(0.6, z.slowFactor * 0.85);
+          bullets.splice(i, 1);
+          break;
+        }
+      }
+    }
+
+    // Zombies move/eat
+    for (let i = zombies.length - 1; i >= 0; i--) {
+      const z = zombies[i];
+      const colIndex = Math.floor((z.x - GRID_LEFT) / CELL_W);
+      const r = z.lane;
+      const blockingPlant = (colIndex >= 0 && colIndex < COLS) ? grid[r][colIndex] : null;
+
+      if (blockingPlant && blockingPlant.kind !== 'sunflower') {
+        const eatDps = z.kind === 'rugby' ? 22 : 18;
+        blockingPlant.hp -= eatDps * (dt / 600);
+        if (blockingPlant.hp <= 0) grid[r][colIndex] = null;
+      } else {
+        const speed = z.speed * z.slowFactor;
+        z.x -= speed * dt;
+      }
+
+      if (z.hp <= 0) { score += 10; addSun(z.x, z.y - 12); zombies.splice(i, 1); updateUI(); continue; }
+      if (z.x < GRID_LEFT - 8) { running = false; message('Bạn đã thua! Zombie đã vào nhà. Nhấn Restart/R để chơi lại.'); }
+    }
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawGrid();
+
+    // plants
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) { const p = grid[r][c]; if (p) drawPlant(p); }
+    // bullets
+    bullets.forEach(drawBullet);
+    // zombies
+    zombies.forEach(drawZombie);
+    // suns
+    suns.forEach(drawSunIcon);
+  }
+
+  function loop(ts) {
+    if (!lastTime) lastTime = ts;
+    const dt = ts - lastTime;
+    lastTime = ts;
+
+    if (running) {
+      update(dt);
+      render();
+      requestAnimationFrame(loop);
+    } else {
+      render();
+    }
+  }
+
+  // Restart
+  function resetGame() {
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) grid[r][c] = null;
+    bullets.length = 0; zombies.length = 0; suns.length = 0;
+    selectedPlant = null;
+    document.querySelectorAll('.btn').forEach(x => x.classList.remove('active'));
+    sun = 100; score = 0; levelIndex = 0; spawnTimer = 0; levelTime = 0; waveActive = false; running = true; msgTimer = 0;
+    ui.msg.style.opacity = 1; ui.msg.textContent = 'Nhấn Start/Space để bắt đầu wave';
+    ui.progress.style.width = '0%'; updateUI();
+    lastTime = 0;
+    requestAnimationFrame(loop);
+  }
+
+  // Keyboard + UI controls
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { if (!waveActive && running) { waveActive = true; message('Wave bắt đầu!'); } }
+    if (e.key.toLowerCase() === 'r') resetGame();
+  });
+  ui.startWave.addEventListener('click', () => { if (!waveActive && running) { waveActive = true; message('Wave bắt đầu!'); } });
+  ui.restart.addEventListener('click', resetGame);
+
+  // Ambient suns
+  setInterval(() => {
+    const x = GRID_LEFT + 20 + Math.random() * (COLS * CELL_W - 40);
+    const y = GRID_TOP + 20 + Math.random() * (ROWS * CELL_H - 40);
+    addSun(x, y, 50);
+  }, 5200);
+
+  // Kick off
+  updateUI();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
